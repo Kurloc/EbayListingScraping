@@ -1,10 +1,11 @@
 import json
+import time
 
 import requests
 import re
 
-
-# REGEX HELPER FUNCTION
+# # # STATIC METHODS # # #
+# REGEX HELPER FUNCTION #
 def parseInfo(i, namePattern, pricePattern, hRefPattern, printing=False):
     nameVal, priceVal, linkVal = '', '', ''
 
@@ -27,13 +28,34 @@ def parseInfo(i, namePattern, pricePattern, hRefPattern, printing=False):
     if printing: print('---------------------------')
     return nameVal, priceVal, linkVal
 
+# PRINT JSON TO FILE WITH NICE NEWLINES AND TABS #
+def prettyPrintJsonToFile(path, array) -> None:
+    with open(path, 'w') as f:
+        f.write('[\n')
+        c = 0
+        for listing in array:
+            if c != len(array):
+                f.write('\t' + listing.getJson() + ', \n')
+            else:
+                f.write('\t' + listing.getJson() + '\n')
+            c += 1
+        f.write(']')
+
+# SAVE STRING STRAIGHT TO FILE ON TOP LINE #
+def saveToFile(string, path) -> None:
+    with open(path, 'w') as f:
+        f.write(string)
+
 
 # Master Ebay Parser, Create 1 per session
-class EbayParser:
+class EbayScrapeNParser:
+    currentPage = 0
+
     ebayRegexPattern = r'<li class="s-item.+?s-item--watch-at-corner" data-view=mi:\d{0,10}\|iid:\d{0,10}\>(.+?)\<!--M\/--><\/li><!--F\/--><!--F#p_0-->'
     pricePattern = r'<span.{0,100}?price>(\$.+?)</span>'
     namePattern = r'<h3.+?>(.+?)</h3>'
     hRefPattern = r'class=s-item__link href=(https:\/\/www.ebay.com\/.+?\?)'
+
     listings = []
 
     def __init__(self):
@@ -60,6 +82,15 @@ class EbayParser:
             # CONVERT HTML INFO TO PYTHON CLASS AND SAVE IN AN ARRAY FOR EASY ACCESS
             newItem = parseInfo(x[i], self.namePattern, self.pricePattern, self.hRefPattern)
             self.addListingWO(VideoCardListing(newItem[0], newItem[1], newItem[2]))
+        self.currentPage += 1
+
+    # Pass in the front page for a search result and go
+    # Pass in how many pages, back pages can be junk so guess on how many good pages there are
+    def parseAllPages(self, pageUrl, howManyPages):
+        for i in range(howManyPages):
+            pageInfo = '&_pgn=' + str(self.currentPage) + '&rt=nc'
+            self.parsePage(pageUrl + pageInfo)
+            time.sleep(2)
 
     def addListing(self, name, price, href):
         self.listings.append(VideoCardListing(name, price, href))
@@ -84,29 +115,34 @@ class EbayParser:
                 returnString = returnString + j + ", "
         return returnString[0:-2] + ']'
 
-    @staticmethod
-    def saveToFile(string, path) -> None:
-        with open(path, 'w') as f:
-            f.write(string)
-
-    def saveCurrentListingsToFIle(self, path) -> None:
+    def saveCurrentListingsToFile(self, path) -> None:
         j = self.dumpAllListingsToJson()
-        self.saveToFile(j, path)
+        saveToFile(j, path)
+
+    def loadJsonFromFile(self, path):
+        with open(path, 'r') as f:
+            jsonTextArray = f.readlines()
+            print(len(jsonTextArray))
+            jsonTextArray = jsonTextArray[1:-1]
+            self.listings = []
+            for line in jsonTextArray:
+                cleanLine = (line.replace('\t', '', 1).replace('\n', '', 1))
+                cleanLine = cleanLine[:-2]
+                j = json.loads("[" + cleanLine + "]")[0]
+                self.addListing(j['name'], j['price'], j['href'])
 
     def prettyPrintJsonToFile(self, path):
-        with open(path, 'w') as f:
-            f.write('[\n')
-            c = 0
-            for i in self.listings:
-                if c != len(self.listings):
-                    f.write('\t' + i.getJson() + ', \n')
-                else:
-                    f.write('\t' + i.getJson() + '\n')
-                c += 1
-            f.write(']')
+        prettyPrintJsonToFile(path, self.listings)
 
+    def searchMyListingsByPrice(self, minPrice, maxPrice) -> []:
+        returnArray = []
+        for listing in self.listings:
+            price = float(listing.price.replace('$', '').replace(',', ''))
+            if float(maxPrice) >= price >= float(minPrice):
+                returnArray.append(listing)
+        return returnArray
 
-# Ebay Listing Class for easy serialization to JSON
+# Ebay Listing Class for easy serialization to JSON #
 class VideoCardListing:
     name, href = '', ''
     price = 0
@@ -120,14 +156,31 @@ class VideoCardListing:
         return json.dumps(self.__dict__)
 
 
-# CREATE AN INSTANCE OF OUR PARSER
-ebayParser = EbayParser()
+# # # DO A WEB SCRAPE ON SOME EBAY PAGES # # #
+# CREATE AN INSTANCE OF OUR PARSER #
+ebayParser = EbayScrapeNParser()
 
-# PARSE AN EBAY PAGE // MAYBE SET UP CODE TO HAVE IT SEARCH FOR A KEYWORD AND THEN PARSE THE FOLLOWING PAGE?
-ebayParser.parsePage("https://www.ebay.com/sch/i.html?_from=R40&_trksid=m570.l1313&_nkw=gpu&_sacat=0")
+# PARSE AN EBAY PAGE // MAYBE SET UP CODE TO HAVE IT SEARCH FOR A KEYWORD AND THEN PARSE THE FOLLOWING PAGE? #
+# Seems to crash after 5 pages by hanging up, I haven't debugged what is going on. #
+ebayParser.parseAllPages("https://www.ebay.com/sch/i.html?_from=R40&_trksid=m570.l1313&_nkw=gpu&_sacat=0", 5)
 
-# SAVE OUR LISTINGS TO A JSON FILE
+# Save Json to a file
 ebayParser.prettyPrintJsonToFile('testingEbay.json')
+# # # END OF A WEB SCRAPE # # #
 
-# ITERATES THROUGH ALL LISTINGS IN OUR MAIN ARRAY AND PRINTS THEM 1 by 1
+
+# # # LOAD AND ANALYSIS ON SAVED LISTINGS # # #
+# SAVE OUR LISTINGS TO A JSON FILE
+ebayParser.loadJsonFromFile('testingEbay.json')
+
+# ITERATES THROUGH ALL LISTINGS IN OUR MAIN ARRAY AND PRINTS THEM 1 by 1 #
 ebayParser.printAllListings()
+
+# SOME CODE TO SEARCH CURRENT LISTINGS SCRAPED/LOADED AND SAVE RESULTS TO A FILE FOR FURTHER ANALYSIS
+x = ebayParser.searchMyListingsByPrice(50, 500)
+for i in x:
+    print('name: ' + i.name)
+    print('price: ' + i.price)
+
+prettyPrintJsonToFile('testingEbayPriceSearch.json', x)
+# # # END OF ANALYSIS ON SAVED LISTINGS # # #
